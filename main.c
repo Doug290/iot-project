@@ -49,68 +49,39 @@ void setup() {
 
     // Inicializa o LCD e indica a cidade a ser monitorada
     _lcd.begin(LCD_NUMERO_COLUNAS,LCD_NUMERO_LINHAS);
-    _lcd.print("Lab08-Exp2  PLUS");
+    _lcd.print("Status COVID-19 - Brazil");
     _lcd.setCursor(0,1);
-    _lcd.print("Sensor --> Nuvem");
-    delay(2000);	// Deixa a mensagem inicial visível
+    _lcd.print("Buscando dados...");
+    delay(2000);
 
-    //Inicializa a lógica do ESP8266
-    pinMode(PINO_LED_OK, OUTPUT);
-    Serial.begin(SERIAL_BAUDRATE);
-    Serial.setTimeout(SERIAL_TIMEOUT);
-    _mostraComandosNoDisplay = true;		// Mostrar comandos AT no display LCD
+    // Inicializa a comunicação com o ESP8266
+    Serial.begin(115200);
+    Serial.setTimeout(5000);
+    sendCommandTo8266("AT", "OK");	// Confirma que o ESP8266 está operando
 
-    // Confirma que o ESP8266 está operacional, inicializando o módulo
-    bool esp8266OK = sendCommandTo8266("AT+RST", "ready");
-    if (!esp8266OK) {						// O ESP8266 está operacional?
-        digitalWrite(PINO_LED_OK, LOW);		// NÃO, reporta o problema
-        _lcd.setCursor(0,1);
-        _lcd.print("ERRO no ESP8266!");
-        while (1) {	// Bloqueia a execução do programa
-            delay(500);
-            _lcd.noDisplay();
-            delay(500);
-            _lcd.display();
-        }
-    } else {								// SIM, acende o LED verde
-        digitalWrite(PINO_LED_OK, HIGH);
-        // Conecta ao Simulator de WiFi usando o comando AT+CWJAP
-        String loginWiFi = "AT+CWJAP=\"" + _ssidName + "\",\"" + _ssidPassword + "\"";
-        sendCommandTo8266(loginWiFi, "OK");
+    // Conecta ao Simulator de Wifi usando o comando AT+CWJAP
+    String loginWiFi = "AT+CWJAP=\"" + _ssidName + "\",\"" + _ssidPassword + "\"";
+    sendCommandTo8266(loginWiFi, "OK");
 
-        // Abre o canal de comunicação TCP com o site usando o comando AT+CIPSTART
-        String acessoTCP = "AT+CIPSTART=\"TCP\",\"" + _siteHost + "\"," + String(_tcpHttpPort);
-        sendCommandTo8266(acessoTCP, "OK");
-
-        delay(2000);
-        _mostraComandosNoDisplay = false;	// Não mostra mais os comandos AT no display
-    }
+    // Abre o canal de comunicação TCP com o site usando o comando AT+CIPSTART
+    String acessoTCP = "AT+CIPSTART=\"TCP\",\"" + _siteHost + "\"," + String(_tcpHttpPort);
+    sendCommandTo8266(acessoTCP, "OK");
 }
 
 
-// Envia os sensores periodicamente para o Thingspeak
+// Atualiza a temperatura a cada 10 segundos
 void loop() {
-    // Verifica se mudou o comando do motor
-    char sucessoLendoApi = ' ';	// Assume comando para o motor recebido com sucesso
-    int controleMotorAtual = digitalRead(PINO_CONTROLE_MOTOR_LIGAR);
-    int deuErro = recebeDados();
-    if (deuErro < -1) {									// Conseguiu receber a informação da api?
-        sucessoLendoApi = '-';								// NÃO, sinaliza
-    } else if (-1 == deuErro) {							// Comando desconhecido?
-        sucessoLendoNuvem = '?';								// SIM, sinaliza
-    } else if (deuErro != controleMotorAtual) {			// Recebeu informacao da API?
-        
+    recebeDados();								// Requer dados sobre a temperatura
+    if (recebeuResposta()) {						// Recebeu a resposta?
+        String temperatura = BuscarTemperatura();	// SIM, mostra a temperatura no display LCD
+        mostraDisplayLCD(temperatura);
     }
-
-    delay(20000);
+    delay(10000);
 }
 
 /**
- * @brief	Monta o pacote GET e envia os dados dos sensores para a nuvem.
+ * @brief	Monta o pacote GET e solicita dados da API.
  *			Aguarda resposta ou erro.
- * @param	temperatura		Texto com a temperatura a ser apresentada.
- * @param	nivel			Texto com o nível d'água no reservatório.
- * @param	motor			Texto com o status do motor (ligado ou desligado).
  * @return	TRUE, se o pacote foi enviado para o site com sucesso.
  *			FALSE, se houve alguma falha no envio de dados.
  */
@@ -131,39 +102,10 @@ int recebeDados() {
 
     // Envia o tamanho do pacote para o ESP8266
     String tamanhoPacote = "AT+CIPSEND=" + numberToString(length);
-    if (!sendCommandTo8266(tamanhoPacote, ">"))			// Recebeu o prompt?
-        tipoErro = -2;									// NÃO, acusa erro de comunicação
-    else if (!sendCommandTo8266(httpPacket, "SEND OK"))	// Conseguiu enviar a mensagem?
-        tipoErro = -3;									// NÃO, acusa erro de comunicação
-    else if (!recebeuResposta())							// O servidor começou a enviar a resposta?
-        tipoErro = -4;							// NÃO, acusa erro de comunicação
-    else {												// SIM, extrai o comando para o motor
-        delay(10);
-        char dado = Serial.read();
-        if('\"' == dado) {									// Início do comando?
-            bool recebeuAlgo = false;							// SIM, extrai a resposta
-            int leitura = 0;
-            while (Serial.available()) {
-                dado = Serial.read();
-                if ('"' == dado) {						// Fim do campo 4?
-                    if (recebeuAlgo && 					// SIM, valida a resposta
-                        ((0 == leitura) || (1 == leitura)))
-                        controleMotor = leitura;
-                    break;
-                } else if ((dado >= '0') && 			// Valor numérico?
-                           (dado <= '9')) {
-                    recebeuAlgo = true;					// SIM, monta o valor
-                    dado -= '0';
-                    leitura *= 10;
-                    leitura += dado;
-                } else {								// NÃO, acusa erro
-                    break;
-                }
-            }
-        }
-    }
-    purgeESP8266();
-    return tipoErro;
+    sucesso &= sendCommandTo8266(tamanhoPacote, ">");
+    sucesso &= sendCommandTo8266(httpPacket, "SEND OK\r\n");
+
+    return sucesso;
 }
 
 

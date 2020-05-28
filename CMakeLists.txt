@@ -3,4 +3,4 @@ project(iot_project C)
 
 set(CMAKE_C_STANDARD 99)
 
-add_executable(iot_project main.c)
+add_executable(iot_project main.c base.c)
