@@ -32,21 +32,13 @@ String _ssidName     = "Simulator Wifi";		// Nome da rede
 String _ssidPassword = ""; 						// Sem senha
 int _tcpHttpPort     = 80; 						// Porta HTTP na conexão TCP
 
-// Dados para acesso ao site da Thinspeak
-// https://api.thingspeak.com/update?api_key=WU0JTLTNPM0QW6W7&field1=0
-String _siteHost    = "api.thingspeak.com";		// URL
-String _siteAPPID   = "K7TMIJSTPZ142OU1";		// Appkey de escrita no site
-String _siteURIbase = "/update?api_key=" + _siteAPPID;
-String _siteField1  = "&field1=";
-String _siteField2  = "&field2=";
-String _siteField3  = "&field3=";
-
-// Parâmetros para a leitura da temperatura
-const int TEMPERATURA_CELSIUS_MINIMA = -40;		// Menor temperatura do sensor [°C]
-const int TEMPERATURA_CELSIUS_MAXIMA = 125;		// Maior temperatura do sensor [°C]
-
-int _leituraMinima;			// Salva menor leitura (-40°C)
-int _leituraMaxima;			// Salva maior leitura (+125°C)
+// Dados para acesso a API
+String _siteHost    = "api.covid19api.com";
+String _siteURIbase = "/live";
+String _paramField1  = "/country/";
+String _paramField2  = "/brazil/";
+String _paramField3  = "/status/";
+String _paramField4  = "/live";
 
 
 // Inicializa a lógica do LCD e abre o canal de comunicação TCP via WiFi
@@ -55,23 +47,12 @@ void setup() {
     pinMode(PINO_LED_ERRO, OUTPUT);
     digitalWrite(PINO_LED_ERRO, LOW);
 
-    // Inicializando a lógica dos sensores
-    pinMode(PINO_SENSOR_TEMPERATURA, INPUT);
-    pinMode(PINO_SENSOR_NIVEL_DAGUA, INPUT);
-    pinMode(PINO_SENSOR_MOTOR_OPERANDO, INPUT);
-
     // Inicializa o LCD e indica a cidade a ser monitorada
     _lcd.begin(LCD_NUMERO_COLUNAS,LCD_NUMERO_LINHAS);
     _lcd.print("Lab08-Exp2  PLUS");
     _lcd.setCursor(0,1);
     _lcd.print("Sensor --> Nuvem");
     delay(2000);	// Deixa a mensagem inicial visível
-
-    // Prepara para calibrar a temperatura
-    // Inicializa com os valores do exercício com o sensor de temperatura
-    // https://www.tinkercad.com/things/kGOeHnwDf2S
-    _leituraMinima = 20;	// Usar 9999 se quiser fazer a auto calibração
-    _leituraMaxima = 358; // Usar -9999 se quiser fazer a auto calibração
 
     //Inicializa a lógica do ESP8266
     pinMode(PINO_LED_OK, OUTPUT);
@@ -109,31 +90,6 @@ void setup() {
 
 // Envia os sensores periodicamente para o Thingspeak
 void loop() {
-    // Le o sensor de temperatura (precisão 4,88mV)
-    int leituraSensor = analogRead(PINO_SENSOR_TEMPERATURA);
-    // Executa a autocalibração
-    if (leituraSensor > _leituraMaxima)			_leituraMaxima = leituraSensor;
-    if (leituraSensor < _leituraMinima)			_leituraMinima = leituraSensor;
-    // Converte a leitura do sensor para temperatura Celsius
-    int temperaturaCelsius = map(leituraSensor,
-                                 _leituraMinima, _leituraMaxima,
-                                 TEMPERATURA_CELSIUS_MINIMA, TEMPERATURA_CELSIUS_MAXIMA);
-    String temperaturaCelsiusTexto = numberToString(temperaturaCelsius);
-
-    // Sensor de nível da caixa d'água
-    int nivelCaixaDagua = analogRead(PINO_SENSOR_NIVEL_DAGUA);
-    int nivelCaixaDaguaPercente = map(nivelCaixaDagua,
-                                      0, 1023, 0, 100);
-    String nivelCaixaDaguaTexto = numberToString(nivelCaixaDaguaPercente);
-
-    // Sensor do motor
-    bool motorLigado = digitalRead(PINO_SENSOR_MOTOR_OPERANDO);
-    String motorLigadoTexto = motorLigado ? "1" : "0";
-
-    // Mostra o status dos sensores, se não estiver usando o LCD para comandos AY
-    if (!_mostraComandosNoDisplay)
-        mostraDisplayLCD(temperaturaCelsiusTexto, nivelCaixaDaguaTexto, motorLigado);
-
     // Enviar sensores para a nuvem
     enviarSensores(temperaturaCelsiusTexto, nivelCaixaDaguaTexto, motorLigadoTexto);
     _mostraComandosNoDisplay = false;
@@ -151,25 +107,58 @@ void loop() {
  * @return	TRUE, se o pacote foi enviado para o site com sucesso.
  *			FALSE, se houve alguma falha no envio de dados.
  */
-bool enviarSensores(String temperatura, String nivel, String motor) {
-    bool sucesso = true;
+int recebeDados() {
+    int controleMotor = -1;	// Assume comando inválido
+    purgeESP8266();			// Purga resíduos da comunicação com o ESP8266
 
     // Constrói a requisição HTTP
-    String uriCompleta = _siteURIbase +
-                         _siteField1 + temperatura +
-                         _siteField2 + motor +
-                         _siteField3 + nivel;
+    String uriCompleta = _siteHost +
+            _siteURIbase +
+            _paramField1 +
+            _paramField2 +
+            _paramField3 +
+            _paramField4;
 
     String httpPacket = "GET " + uriCompleta + " HTTP/1.1\r\nHost: " + _siteHost + "\r\n\r\n";
-    digitalWrite(uriCompleta);
     int length = httpPacket.length();
 
     // Envia o tamanho do pacote para o ESP8266
     String tamanhoPacote = "AT+CIPSEND=" + numberToString(length);
-    sucesso &= sendCommandTo8266(tamanhoPacote, ">");
-    sucesso &= sendCommandTo8266(httpPacket, "SEND OK");
-
-    return sucesso;
+    if (!sendCommandTo8266(tamanhoPacote, ">"))			// Recebeu o prompt?
+        controleMotor = -2;									// NÃO, acusa erro de comunicação
+    else if (!sendCommandTo8266(httpPacket, "SEND OK"))	// Conseguiu enviar a mensagem?
+        controleMotor = -3;									// NÃO, acusa erro de comunicação
+    else if (!recebeuResposta())							// O servidor começou a enviar a resposta?
+        controleMotor = -4;									// NÃO, acusa erro de comunicação
+    else if(!Serial.find("\"field4\":"))					// A resposta inclui o campo de controle do motor?
+        controleMotor = -5;									// NÃO, acusa erro de comunicação
+    else {												// SIM, extrai o comando para o motor
+        delay(10);
+        char dado = Serial.read();
+        if('\"' == dado) {									// Início do comando?
+            bool recebeuAlgo = false;							// SIM, extrai a resposta
+            int leitura = 0;
+            while (Serial.available()) {
+                dado = Serial.read();
+                if ('"' == dado) {						// Fim do campo 4?
+                    if (recebeuAlgo && 					// SIM, valida a resposta
+                        ((0 == leitura) || (1 == leitura)))
+                        controleMotor = leitura;
+                    break;
+                } else if ((dado >= '0') && 			// Valor numérico?
+                           (dado <= '9')) {
+                    recebeuAlgo = true;					// SIM, monta o valor
+                    dado -= '0';
+                    leitura *= 10;
+                    leitura += dado;
+                } else {								// NÃO, acusa erro
+                    break;
+                }
+            }
+        }
+    }
+    purgeESP8266();
+    return controleMotor;
 }
 
 
