@@ -71,12 +71,37 @@ void setup() {
 
 // Atualiza a temperatura a cada 10 segundos
 void loop() {
-    recebeDados();								// Requer dados sobre a temperatura
+    requestDados();								// Requer dados sobre a temperatura
     if (recebeuResposta()) {						// Recebeu a resposta?
-        String temperatura = BuscarTemperatura();	// SIM, mostra a temperatura no display LCD
-        mostraDisplayLCD(temperatura);
+        String dadosCovid = BuscarDadosCovid();	// SIM, mostra a temperatura no display LCD
+        mostraDisplayLCD(dadosCovid);
     }
     delay(10000);
+}
+
+/**
+ * @brief	Envia o comando AT para o ESP8266 e aguarda uma string de resposta.
+ *			Se ocorrer algum erro, acende o LED de erro.
+ * @param	comando		Comando AT a ser enviado para o ESP8266.
+ * @param	aguardar	Resposta a ser aguardada do ESP8266.
+ *						Se vazia, não aguarda por uma resposta.
+ * @return	TRUE, se recebeu a resposta esperada.
+ *			FALSE, o comando falhou e o LED de erro foi aceso.
+ */
+bool sendCommandTo8266(String comando, char * aguardar) {
+    bool sucesso = false;
+
+    // Envia o comando para o ESP8266 e aguarda que seja processado
+    Serial.println(comando);
+    Serial.flush();
+    delay(50);
+
+    // Verifica se há uma resposta a ser aguardada
+    if (0 == aguardar[0])		    		sucesso = true;
+    else if (Serial.find(aguardar))       sucesso = true;
+    else      							digitalWrite(PINO_LED_ERRO, HIGH);
+
+    return sucesso;
 }
 
 /**
@@ -85,7 +110,7 @@ void loop() {
  * @return	TRUE, se o pacote foi enviado para o site com sucesso.
  *			FALSE, se houve alguma falha no envio de dados.
  */
-int recebeDados() {
+int requestDados() {
     int tipoErro = -1;	// Assume comando inválido
     purgeESP8266();			// Purga resíduos da comunicação com o ESP8266
 
@@ -108,48 +133,8 @@ int recebeDados() {
     return sucesso;
 }
 
-
-/**
- * @brief	Mostra os dados dos sensores no display LCD:
- *			Linha 1: Temp: xxx°C  ON .
- *			Linha 2: Agua: xxx%   OFF.
- * @param	temperatura		Texto com a temperatura a ser apresentada.
- * @param	nivel			Texto com o nível d'água no reservatório.
- * @param	motor			Se motor ligado ou desligado.
- */
-void mostraDisplayLCD(String temperatura, String nivel, bool motor) {
-    // _lcd.clear();
-    // Escreve na primeira linha a temperatura e motor ligado
-    _lcd.setCursor(0,0);
-    _lcd.print("Casos Confirmados: ");
-    _lcd.print(temperatura);
-    _lcd.print('\xB2');
-    _lcd.print("C  ");
-    if (motor)			_lcd.print("ON      ");
-    else					_lcd.print("        ");
-    // Escreve na segunda linha o nível da caixa d'água e motor desligado
-    _lcd.setCursor(0,1);
-    _lcd.print("Agua: ");
-    _lcd.print(nivel);
-    _lcd.print("%   ");
-    if (!motor)			_lcd.print("OFF     ");
-    else					_lcd.print("        ");
-}
-
-/**
- * @brief	limpa o buffer do ESP8266 para que não afete a comunicação
- */
-void purgeESP8266() {
-    while (Serial.available()) {
-        char dado = Serial.read();
-    }
-}
-
-
-/**
- * @brief	Aguarda a existência de alguma informação proveniente do
- *			ESP8266 (resposta ao comando get).
- */
+// Aguarda a existência de alguma informação proveniente do
+// ESP8266 (resposta ao comando get)
 bool recebeuResposta() {
     while(!Serial.available())
     {
@@ -161,117 +146,66 @@ bool recebeuResposta() {
     return Serial.find("\r\n\r\n");
 }
 
-
 /**
- * @brief	Envia o comando AT para o ESP8266 e aguarda uma string de resposta.
- *			Se ocorrer algum erro, acende o LED de erro.
- * @param	comando		Comando AT a ser enviado para o ESP8266.
- * @param	aguardar	Resposta a ser aguardada do ESP8266.
- *						Se vazia, não aguarda por uma resposta.
- * @return	TRUE, se recebeu a resposta esperada.
- *			FALSE, o comando falhou e o LED de erro foi aceso.
+ * @brief	Busca a temperatura na resposta da API openweather.org.
+ *			Consome os dados na leitura ao buscar "temp":
+ * @return	Temperatura encontrada ou vazio.
  */
-bool sendCommandTo8266(String comando, char * aguardar) {
-    bool sucesso = false;
+String BuscarDadosCovid(){
+    // Variável auxiliar para detecção de timeout
+    unsigned int i = 0;
+    String outputString = "";
 
-    // Envia o comando para o ESP8266 e aguarda que seja processado
-    Serial.println(comando);
-    Serial.flush();
-    delay(50);
-    // Mostra o comando AT no display LCD, se habilitado para tal
-    if (_mostraComandosNoDisplay)	{	// Está mostrando AT no display LCD?
-        imprimeDisplay(1, comando);		// SIM, mostra o comando enviado
-        imprimeDisplay(2, "");				// Aguarda a resposta
+    // Processa a mensagem recebida até encontrar a string temp:
+    while (!Serial.find("\"temp\":"))
+    { // Não faz nada. Isso é usado para ir ate o ponto
+        // correto dentro da mensagem
     }
 
-    // Verifica se há uma resposta a ser aguardada
-    if (0 == aguardar[0])
-        sucesso = true;
-    else if (_mostraComandosNoDisplay) {	// Mostrando AT na tela do LCD?
-        sucesso = findMostrando(aguardar);
-        delay(TEMPO_MOSTRANDO_RESPOSTA);	// SIM, permite a leitura
-    } else
-        sucesso = Serial.find(aguardar);	// NÃO, apenas aguarda a resposta
-
-    digitalWrite(PINO_LED_ERRO, !sucesso);
-    return sucesso;
-}
-
-
-/**
- * @brief	Mostra no display LCD os caracteres recebidos enquanto aguarda
- *          a resposta desejada.  Substitui '\r' por '\xFE' e '\n' por '\xFF'.
- * @param	aguardar	Resposta a ser aguardada do ESP8266.
- *						Se vazia, não aguarda por uma resposta.
- * @return	TRUE, se recebeu a resposta esperada.
- *			FALSE, o comando falhou e o LED de erro foi aceso.
- */
-bool findMostrando(char * aguardar) {
-    bool sucesso = false;
-
-    if (0 == aguardar[0]) 		// Aguarda alguma resposta?
-        sucesso = true;				//
-    else {
-        unsigned long tempoLimite = millis() + SERIAL_TIMEOUT;
-        int index = 0;
-        String resposta = "";
-        while (millis() <= tempoLimite) {
-            if (!Serial.available())		// Recebeu algo?
-                delay(1);					// NÃO, aguarda 1ms
-            else {						// SIM, processa a resposta
-                char recebeu = Serial.read();
-                // Deixa os caracteres de controle visíveis no display LCD
-                if ('\r' == recebeu)			resposta += '\xFE';
-                else if ('\n' == recebeu)		resposta += '\xFF';
-                else if (recebeu < ' ')			resposta += '\xFC';
-                else 							resposta += recebeu;
-                // Verifica se encontrou a palavra procurada
-                if (recebeu != aguardar[index]) {	// É uma caracter da palavra?
-                    index = 0;						// NÃO, continua aguardando
-                } else {							// SIM, verifica se terminou
-                    index++;
-                    if (0 == aguardar[index]) {			// Encontrou o que procurava?
-                        sucesso = true;						// SIM, acusa o sucesso
-                        break;
-                    }
-                }
+    // tenta processar as informações recebidas
+    while (i<60000) {
+        // se existirem informações a serem processadas
+        if(Serial.available()) {
+            // Lê os caracteres um a um
+            char c = Serial.read();
+            // Se encontrar um caractere significa que chegamos ao fim
+            // da informação que queríamos encontrar, e termina o loop
+            if((c==','))
+            {
+                break;
             }
-        }	//  while (millis() <= tempoLimite)
-        imprimeDisplay(0, resposta);	// Mostra a resposta
-    }	// if (0 == aguardar[0])
 
-    return sucesso;
+            // copia o caractere lido para a variável a ser
+            // utilizada posteriormente
+            outputString += c;
+        }
+        // incrementa a variável de número de tentativas
+        i++;
+    }
+    return outputString;
 }
 
 
 /**
- * @brief	Escreve no display LCD as mensagens trocadas com o ESP8266
- *			enquanto não estiver conectado com o Smartphone.
- * @param	comoEscrever	Indica a condição de escrita:
- *							=1, limpa a tela antes de escrever na primeira linha.
- *							=2, limpa a segunda linha antes de escrever.
- *							=3, limpa a primeira linha antes de escrever.
- *							Qualquer outro valor, continua com o cursor atual.
- *			texto			Texto a ser escrito no display LCD.
+ * @brief	limpa o buffer do ESP8266 para que não afete a comunicação
  */
-void imprimeDisplay(byte comoEscrever, String texto) {
-    if (1 == comoEscrever)		 	_lcd.clear();
-    else if (2 == comoEscrever)		limpaLinhaLCD(1);
-    else if (3 == comoEscrever)		limpaLinhaLCD(0);
-    String textoCurto = texto.substring(0, LCD_NUMERO_COLUNAS);
-    _lcd.print(textoCurto);
+void purgeESP8266() {
+    while (Serial.available()) {
+        char dado = Serial.read();
+    }
 }
 
-
 /**
-* @brief	Limpa uma linha do display LCD, deixando o cursor na
-*			primeira coluna da linha, ao final.
-* @param	linha	Linha a ser limpa.
-*/
-void limpaLinhaLCD(byte linha) {
-    _lcd.setCursor(0, linha);
-    _lcd.print("                ");
-    _lcd.setCursor(0, linha);
+ * @brief	Mostra a temperatura na segunda linha do display.
+ * @param	temperatura		Texto com a temperatura a ser apresentada.
+ */
+void mostraDisplayLCD(String statusCovid) {
+  // move o cursor para segunda linha do display
+  _lcd.setCursor(0,1);
+  // escreve as informações no display
+  _lcd.print(statusCovid);  
+  _lcd.print('\xB2'); 
+  _lcd.print("C        ");
 }
 
 
