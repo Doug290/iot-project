@@ -93,16 +93,13 @@ void loop() {
     // Verifica se mudou o comando do motor
     char sucessoLendoApi = ' ';	// Assume comando para o motor recebido com sucesso
     int controleMotorAtual = digitalRead(PINO_CONTROLE_MOTOR_LIGAR);
-    int mudouMotor = recebeComandoMotor();
-    if (mudouMotor < -1) {									// Conseguiu receber a informação da nuvem?
+    int deuErro = recebeDados();
+    if (deuErro < -1) {									// Conseguiu receber a informação da api?
         sucessoLendoApi = '-';								// NÃO, sinaliza
-    } else if (-1 == mudouMotor) {							// Comando desconhecido?
+    } else if (-1 == deuErro) {							// Comando desconhecido?
         sucessoLendoNuvem = '?';								// SIM, sinaliza
-    } else if (mudouMotor != controleMotorAtual) {			// Mudou o estado do motor?
-        digitalWrite(PINO_CONTROLE_MOTOR_LIGAR, mudouMotor);	// SIM, comuta a condição do motor
-        if (mudouMotor)				Serial.println("MOTOR: ligado");
-        else						Serial.println("MOTOR: desligado");
-        delay(20);					// Garante que o relé estabilize
+    } else if (deuErro != controleMotorAtual) {			// Recebeu informacao da API?
+        
     }
 
     delay(20000);
@@ -182,7 +179,7 @@ void mostraDisplayLCD(String temperatura, String nivel, bool motor) {
     // _lcd.clear();
     // Escreve na primeira linha a temperatura e motor ligado
     _lcd.setCursor(0,0);
-    _lcd.print("Temp: ");
+    _lcd.print("Casos Confirmados: ");
     _lcd.print(temperatura);
     _lcd.print('\xB2');
     _lcd.print("C  ");
