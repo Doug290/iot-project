@@ -90,12 +90,22 @@ void setup() {
 
 // Envia os sensores periodicamente para o Thingspeak
 void loop() {
-    // Enviar sensores para a nuvem
-    enviarSensores(temperaturaCelsiusTexto, nivelCaixaDaguaTexto, motorLigadoTexto);
-    _mostraComandosNoDisplay = false;
+    // Verifica se mudou o comando do motor
+    char sucessoLendoApi = ' ';	// Assume comando para o motor recebido com sucesso
+    int controleMotorAtual = digitalRead(PINO_CONTROLE_MOTOR_LIGAR);
+    int mudouMotor = recebeComandoMotor();
+    if (mudouMotor < -1) {									// Conseguiu receber a informação da nuvem?
+        sucessoLendoApi = '-';								// NÃO, sinaliza
+    } else if (-1 == mudouMotor) {							// Comando desconhecido?
+        sucessoLendoNuvem = '?';								// SIM, sinaliza
+    } else if (mudouMotor != controleMotorAtual) {			// Mudou o estado do motor?
+        digitalWrite(PINO_CONTROLE_MOTOR_LIGAR, mudouMotor);	// SIM, comuta a condição do motor
+        if (mudouMotor)				Serial.println("MOTOR: ligado");
+        else						Serial.println("MOTOR: desligado");
+        delay(20);					// Garante que o relé estabilize
+    }
 
-    // Enviar sensores a cada 1 segundo
-    delay(1000);
+    delay(20000);
 }
 
 /**
@@ -108,7 +118,7 @@ void loop() {
  *			FALSE, se houve alguma falha no envio de dados.
  */
 int recebeDados() {
-    int controleMotor = -1;	// Assume comando inválido
+    int tipoErro = -1;	// Assume comando inválido
     purgeESP8266();			// Purga resíduos da comunicação com o ESP8266
 
     // Constrói a requisição HTTP
@@ -125,13 +135,11 @@ int recebeDados() {
     // Envia o tamanho do pacote para o ESP8266
     String tamanhoPacote = "AT+CIPSEND=" + numberToString(length);
     if (!sendCommandTo8266(tamanhoPacote, ">"))			// Recebeu o prompt?
-        controleMotor = -2;									// NÃO, acusa erro de comunicação
+        tipoErro = -2;									// NÃO, acusa erro de comunicação
     else if (!sendCommandTo8266(httpPacket, "SEND OK"))	// Conseguiu enviar a mensagem?
-        controleMotor = -3;									// NÃO, acusa erro de comunicação
+        tipoErro = -3;									// NÃO, acusa erro de comunicação
     else if (!recebeuResposta())							// O servidor começou a enviar a resposta?
-        controleMotor = -4;									// NÃO, acusa erro de comunicação
-    else if(!Serial.find("\"field4\":"))					// A resposta inclui o campo de controle do motor?
-        controleMotor = -5;									// NÃO, acusa erro de comunicação
+        tipoErro = -4;							// NÃO, acusa erro de comunicação
     else {												// SIM, extrai o comando para o motor
         delay(10);
         char dado = Serial.read();
@@ -158,7 +166,7 @@ int recebeDados() {
         }
     }
     purgeESP8266();
-    return controleMotor;
+    return tipoErro;
 }
 
 
@@ -187,6 +195,31 @@ void mostraDisplayLCD(String temperatura, String nivel, bool motor) {
     _lcd.print("%   ");
     if (!motor)			_lcd.print("OFF     ");
     else					_lcd.print("        ");
+}
+
+/**
+ * @brief	limpa o buffer do ESP8266 para que não afete a comunicação
+ */
+void purgeESP8266() {
+    while (Serial.available()) {
+        char dado = Serial.read();
+    }
+}
+
+
+/**
+ * @brief	Aguarda a existência de alguma informação proveniente do
+ *			ESP8266 (resposta ao comando get).
+ */
+bool recebeuResposta() {
+    while(!Serial.available())
+    {
+        delay(1);
+    }
+
+    // Lê as informações recebidas até encontrar um \r\n\r\n
+    // isso significa que o cabeçalho http foi recebido por completo
+    return Serial.find("\r\n\r\n");
 }
 
 
